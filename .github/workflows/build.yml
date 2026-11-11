@@ -16,13 +16,10 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Install MIPS cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y gcc-mipsel-linux-gnu
-
       - name: Build Go server for MIPS
         run: |
           cd src
-          GOOS=linux GOARCH=mipsle GOMIPS=softfloat CC=mipsel-linux-gnu-gcc CGO_ENABLED=1 go build -o server server.go
+          GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 go build -o server server.go
 
       - name: Upload server binary
         uses: actions/upload-artifact@v4
