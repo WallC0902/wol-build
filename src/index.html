@@ -1,49 +1,103 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-  <script src="https://cdn.bootcdn.net/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
-  <script src="http://app.miwifi.com/js/router_request.js"></script>
-  <title>WOL网络唤醒</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WOL 网络唤醒</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; padding: 20px; }
+.container { max-width: 800px; margin: 0 auto; }
+h1 { text-align: center; margin-bottom: 20px; color: #333; }
+.card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.card h2 { font-size: 16px; margin-bottom: 12px; color: #555; }
+.form-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.form-row input { flex: 1; min-width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+.btn-primary { background: #2ea44f; color: #fff; }
+.btn-primary:hover { background: #2c974b; }
+.btn-wake { background: #0366d6; color: #fff; }
+.btn-wake:hover { background: #0256b9; }
+.btn-edit { background: #6f42c1; color: #fff; }
+.btn-edit:hover { background: #5a32a3; }
+.btn-delete { background: #d73a49; color: #fff; }
+.btn-delete:hover { background: #cb2431; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; }
+th { background: #f8f9fa; font-weight: 600; color: #555; }
+tr:hover { background: #f8f9fa; }
+.actions { display: flex; gap: 6px; }
+.msg { padding: 10px; border-radius: 4px; margin-bottom: 12px; display: none; }
+.msg.show { display: block; }
+.msg-success { background: #e6ffed; color: #22863a; border: 1px solid #34d058; }
+.msg-error { background: #ffeef0; color: #d73a49; border: 1px solid #d73a49; }
+</style>
 </head>
 <body>
-  <h1>WOL网络唤醒</h1>
-  <table>
-    <tr>
-      <td>操作</td>
-      <td>
-        <input type="button" value="授权" id="authorizeButton">
-        <input type="button" value="启动" id="runButton">
-      </td>
-  </table>
-</body>
-<script type="text/javascript">
-var appId = "2882111111111111111";
-$(document).ready(function() {
-  $("#authorizeButton").click(function(){
-    if (!routerRequest.hasAccessToken()) {
-      routerRequest.authorize(window.location.href, appId);
-    }
-  });
-
-  $("#runButton").click(function() {
-    routerRequest.request({
-      path: "/api-third-party/service/datacenter/plugin_control",
-      type: "GET",
-      data: {
-        // deviceId: deviceId, // 这个参数只是调试时添加，上线后要去掉。
-        info: "00:11:22:33:44:55:192.168.31.150",
-        appId: appId,
-      },
-      success: function(data) {
-        alert("启动成功:" + data);
-      },
-      error: function(data) {
-        console.log("error:", data);
-        alert("启动失败");
-      }
-    });
-  });
-});
+<div class="container">
+  <h1>WOL 网络唤醒</h1>
+  <div id="msg" class="msg"></div>
+  <div class="card">
+    <h2>添加设备</h2>
+    <div class="form-row">
+      <input id="addName" placeholder="设备名称">
+      <input id="addMAC" placeholder="MAC 地址 (AA:BB:CC:DD:EE:FF)">
+      <input id="addIP" placeholder="IP 地址 (192.168.1.100)">
+      <button class="btn btn-primary" onclick="addDevice()">添加</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>设备列表</h2>
+    <table>
+      <thead><tr><th>名称</th><th>MAC</th><th>IP</th><th>操作</th></tr></thead>
+      <tbody id="deviceTable"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const API = '/api';
+function showMsg(text, isError) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = 'msg show ' + (isError ? 'msg-error' : 'msg-success');
+  setTimeout(() => el.className = 'msg', 3000);
+}
+async function loadDevices() {
+  const res = await fetch(API + '/devices');
+  const devices = await res.json();
+  const tbody = document.getElementById('deviceTable');
+  tbody.innerHTML = devices.map(d => '<tr><td>' + d.name + '</td><td>' + d.mac + '</td><td>' + d.ip + '</td><td class="actions"><button class="btn btn-wake" onclick="wakeDevice(' + d.id + ')">唤醒</button><button class="btn btn-edit" onclick="editDevice(' + d.id + ',\'' + d.name + '\',\'' + d.mac + '\',\'' + d.ip + '\')">编辑</button><button class="btn btn-delete" onclick="deleteDevice(' + d.id + ')">删除</button></td></tr>').join('');
+}
+async function addDevice() {
+  const name = document.getElementById('addName').value.trim();
+  const mac = document.getElementById('addMAC').value.trim();
+  const ip = document.getElementById('addIP').value.trim();
+  if (!name || !mac) { showMsg('请填写名称和MAC地址', true); return; }
+  const res = await fetch(API + '/devices', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, mac, ip}) });
+  if (res.ok) { showMsg('设备已添加'); document.getElementById('addName').value=''; document.getElementById('addMAC').value=''; document.getElementById('addIP').value=''; loadDevices(); }
+  else { showMsg('添加失败', true); }
+}
+function editDevice(id, name, mac, ip) {
+  const newName = prompt('设备名称', name);
+  if (newName === null) return;
+  const newMac = prompt('MAC 地址', mac);
+  if (newMac === null) return;
+  const newIp = prompt('IP 地址', ip);
+  if (newIp === null) return;
+  fetch(API + '/devices/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:newName, mac:newMac, ip:newIp}) }).then(r => { if(r.ok) { showMsg('已更新'); loadDevices(); } else showMsg('更新失败', true); });
+}
+async function deleteDevice(id) {
+  if (!confirm('确定删除此设备？')) return;
+  const res = await fetch(API + '/devices/' + id, { method: 'DELETE' });
+  if (res.ok) { showMsg('已删除'); loadDevices(); } else showMsg('删除失败', true);
+}
+async function wakeDevice(id) {
+  const res = await fetch(API + '/wake', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+  const data = await res.json();
+  if (res.ok) showMsg(data.message || '唤醒指令已发送');
+  else showMsg(data.message || '唤醒失败', true);
+}
+loadDevices();
 </script>
+</body>
 </html>
