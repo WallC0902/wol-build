@@ -1,3 +1,2 @@
-RUN ./wol
-RUN ./wol_daemon.sh
-STOP killall -s 9 wol_daemon.sh
+#!/bin/sh
+RUN ./server
