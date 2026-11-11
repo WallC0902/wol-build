@@ -1,0 +1,16 @@
+{
+  "plugin_id": 28821111111111111,
+  "name": "WOL网络唤醒",
+  "version": "1.0.0",
+  "developer": "kkhaike",
+  "sdk_level": 5,
+  "supported_rom": [
+    "miwifi_rom_2"
+  ],
+  "description": "通过发送WOL魔术包唤醒局域网内的设备",
+  "start_script": "start_script",
+  "web_ui": "index.html",
+  "permissions": [
+    "network"
+  ]
+}
