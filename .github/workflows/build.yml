@@ -2,31 +2,40 @@ name: Build WOL Plugin
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-    
-    - name: Install MIPS cross-compiler
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
-    
-    - name: Build
-      working-directory: src
-      run: |
-        make CXX=mipsel-linux-gnu-g++
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: wol-plugin-mips
-        path: |
-          src/wol
-          src/sleep
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install MIPS cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-mipsel-linux-gnu
+
+      - name: Build Go server for MIPS
+        run: |
+          cd src
+          GOOS=linux GOARCH=mipsle GOMIPS=softfloat CC=mipsel-linux-gnu-gcc CGO_ENABLED=1 go build -o server server.go
+
+      - name: Upload server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: src/server
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: wol-plugin
+          path: |
+            src/server
+            src/index.html
+            src/start_script
+            src/xiaomi.project
