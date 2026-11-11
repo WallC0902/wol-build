@@ -1,0 +1,32 @@
+name: Build WOL Plugin
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Install MIPS cross-compiler
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
+    
+    - name: Build
+      working-directory: src
+      run: |
+        make CXX=mipsel-linux-gnu-g++
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wol-plugin-mips
+        path: |
+          src/wol
+          src/sleep
