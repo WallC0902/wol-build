@@ -1,12 +1,19 @@
 package main
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,8 +202,286 @@ func checkDeviceStatus(ip string) string {
 
 var store = NewDeviceStore("devices.json")
 
+// ---------------------------------------------------------------------------
+// Xiaomi Router integration
+// ---------------------------------------------------------------------------
+
+// RouterConfig holds the connection settings for the Xiaomi router
+type RouterConfig struct {
+	Address  string `json:"address"`
+	Password string `json:"password"`
+}
+
+// RouterStore persists router configuration
+type RouterStore struct {
+	mu     sync.RWMutex
+	config RouterConfig
+	file   string
+}
+
+func NewRouterStore(filepath string) *RouterStore {
+	s := &RouterStore{
+		config: RouterConfig{Address: "192.168.31.1"},
+		file:   filepath,
+	}
+	s.load()
+	return s
+}
+
+func (s *RouterStore) load() {
+	data, err := os.ReadFile(s.file)
+	if err != nil {
+		return
+	}
+	json.Unmarshal(data, &s.config)
+}
+
+func (s *RouterStore) Get() RouterConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config
+}
+
+func (s *RouterStore) Set(cfg RouterConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config = cfg
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	os.WriteFile(s.file, data, 0644)
+}
+
+// routerLogin authenticates with the Xiaomi router and returns a stok token.
+func routerLogin(address, password string) (string, error) {
+	// Step 1: fetch the login page to extract key and deviceId
+	baseURL := "http://" + address + "/cgi-bin/luci/web"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("无法连接路由器 (%s): %v", address, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+
+	keyRe := regexp.MustCompile(`key:\s*'([^']+)'`)
+	keyMatch := keyRe.FindStringSubmatch(bodyStr)
+	if keyMatch == nil {
+		return "", fmt.Errorf("无法从路由器页面提取登录 key")
+	}
+	key := keyMatch[1]
+
+	deviceIDRe := regexp.MustCompile(`deviceId\s*=\s*"([^"]+)"`)
+	deviceIDMatch := deviceIDRe.FindStringSubmatch(bodyStr)
+	deviceID := ""
+	if deviceIDMatch != nil {
+		deviceID = deviceIDMatch[1]
+	}
+
+	// Step 2: detect encryption mode and encrypt password
+	newEncryptMode := strings.Contains(bodyStr, "newEncryptMode")
+
+	nonce := fmt.Sprintf("%d_%s_%d_%d",
+		0, deviceID,
+		time.Now().UnixMilli(), rand.Intn(10000))
+
+	var encryptedPwd string
+	if newEncryptMode {
+		inner := sha256.Sum256([]byte(password + key))
+		outer := sha256.Sum256([]byte(nonce + hex.EncodeToString(inner[:])))
+		encryptedPwd = hex.EncodeToString(outer[:])
+	} else {
+		h := sha1.Sum([]byte(password + key))
+		encryptedPwd = hex.EncodeToString(h[:])
+	}
+
+	// Step 3: POST login
+	loginURL := "http://" + address + "/cgi-bin/luci/api/xqsystem/login"
+	form := url.Values{}
+	form.Set("username", "admin")
+	form.Set("password", encryptedPwd)
+	form.Set("logtype", "2")
+	form.Set("nonce", nonce)
+
+	loginResp, err := client.PostForm(loginURL, form)
+	if err != nil {
+		return "", fmt.Errorf("登录请求失败: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	var loginResult map[string]interface{}
+	json.NewDecoder(loginResp.Body).Decode(&loginResult)
+
+	if code, ok := loginResult["code"].(float64); !ok || code != 0 {
+		msg := "登录失败"
+		if m, ok := loginResult["msg"].(string); ok {
+			msg = m
+		}
+		return "", fmt.Errorf("路由器拒绝登录: %s", msg)
+	}
+
+	stok, _ := loginResult["token"].(string)
+	if stok == "" {
+		return "", fmt.Errorf("登录成功但未返回 stok")
+	}
+	return stok, nil
+}
+
+// routerGetDeviceList fetches the list of connected devices from the router.
+func routerGetDeviceList(address, stok string) ([]Device, error) {
+	listURL := fmt.Sprintf("http://%s/cgi-bin/luci/;stok=%s/api/misystem/devicelist", address, stok)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(listURL)
+	if err != nil {
+		return nil, fmt.Errorf("获取设备列表失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("解析设备列表响应失败: %v", err)
+	}
+
+	listRaw, ok := result["list"]
+	if !ok {
+		return nil, fmt.Errorf("响应中无 list 字段")
+	}
+	listArr, ok := listRaw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("list 字段不是数组")
+	}
+
+	var devices []Device
+	for _, item := range listArr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		mac, _ := m["mac"].(string)
+		name, _ := m["name"].(string)
+		if name == "" {
+			name, _ = m["hostname"].(string)
+		}
+		ip := ""
+		if ipList, ok := m["ip"].([]interface{}); ok && len(ipList) > 0 {
+			if ipMap, ok := ipList[0].(map[string]interface{}); ok {
+				ip, _ = ipMap["ip"].(string)
+			}
+		}
+		if mac == "" {
+			continue
+		}
+		mac = strings.ToUpper(mac)
+		devices = append(devices, Device{Name: name, MAC: mac, IP: ip})
+	}
+	return devices, nil
+}
+
+// DiscoverDevices logs into the router and returns all connected devices.
+func DiscoverDevices(address, password string) ([]Device, error) {
+	stok, err := routerLogin(address, password)
+	if err != nil {
+		return nil, err
+	}
+	return routerGetDeviceList(address, stok)
+}
+
 func main() {
 	mux := http.NewServeMux()
+	routerStore := NewRouterStore("router.json")
+
+	// API: Get/Set router configuration
+	mux.HandleFunc("/api/router/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(routerStore.Get())
+		case http.MethodPost:
+			var cfg RouterConfig
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if cfg.Address == "" {
+				cfg.Address = "192.168.31.1"
+			}
+			routerStore.Set(cfg)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// API: Discover devices from Xiaomi router
+	mux.HandleFunc("/api/router/discover", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		cfg := routerStore.Get()
+		if cfg.Password == "" {
+			jsonError(w, "请先配置路由器密码", http.StatusBadRequest)
+			return
+		}
+		devices, err := DiscoverDevices(cfg.Address, cfg.Password)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(devices)
+	})
+
+	// API: Batch import discovered devices into the WOL store
+	mux.HandleFunc("/api/router/import", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Devices []struct {
+				Name string `json:"name"`
+				MAC  string `json:"mac"`
+				IP   string `json:"ip"`
+			} `json:"devices"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		imported := 0
+		skipped := 0
+		for _, d := range req.Devices {
+			if d.Name == "" || d.MAC == "" {
+				skipped++
+				continue
+			}
+			if !validateMAC(d.MAC) {
+				skipped++
+				continue
+			}
+			// Check if MAC already exists
+			exists := false
+			for _, existing := range store.List() {
+				if strings.EqualFold(existing.MAC, d.MAC) {
+					exists = true
+					break
+				}
+			}
+			if exists {
+				skipped++
+				continue
+			}
+			store.Add(d.Name, d.MAC, d.IP)
+			imported++
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"imported": imported,
+			"skipped":  skipped,
+			"message":  fmt.Sprintf("导入 %d 台设备，跳过 %d 台（已存在或无效）", imported, skipped),
+		})
+	})
 
 	// API: List all devices
 	mux.HandleFunc("/api/devices", func(w http.ResponseWriter, r *http.Request) {

@@ -3,3 +3,4 @@ src/server
 
 # Runtime data
 src/devices.json
+src/router.json
