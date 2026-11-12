@@ -10,7 +10,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+// validateMAC checks if the MAC address is in valid format XX:XX:XX:XX:XX:XX
+func validateMAC(mac string) bool {
+	_, err := net.ParseMAC(mac)
+	return err == nil
+}
+
+// validateIP checks if the IP is valid IPv4 format (empty is allowed)
+func validateIP(ip string) bool {
+	if ip == "" {
+		return true
+	}
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() != nil
+}
 
 // Device represents a network device that can be woken up
 type Device struct {
@@ -148,6 +164,35 @@ func sendWOL(mac, ip string) error {
 	return nil
 }
 
+func jsonError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// checkDeviceStatus probes common TCP ports to determine if a device is reachable
+func checkDeviceStatus(ip string) string {
+	if ip == "" {
+		return "no_ip"
+	}
+	ports := []string{"80", "443", "22", "445", "3389"}
+	hasTimeout := false
+	for _, port := range ports {
+		conn, err := net.DialTimeout("tcp", ip+":"+port, 800*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return "online"
+		}
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			hasTimeout = true
+		}
+	}
+	if hasTimeout {
+		return "unknown"
+	}
+	return "offline"
+}
+
 var store = NewDeviceStore("devices.json")
 
 func main() {
@@ -155,7 +200,6 @@ func main() {
 
 	// API: List all devices
 	mux.HandleFunc("/api/devices", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			json.NewEncoder(w).Encode(store.List())
 			return
@@ -167,7 +211,19 @@ func main() {
 				IP   string `json:"ip"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Name == "" || req.MAC == "" {
+				jsonError(w, "名称和MAC地址不能为空", http.StatusBadRequest)
+				return
+			}
+			if !validateMAC(req.MAC) {
+				jsonError(w, "MAC地址格式错误", http.StatusBadRequest)
+				return
+			}
+			if !validateIP(req.IP) {
+				jsonError(w, "IP地址格式错误", http.StatusBadRequest)
 				return
 			}
 			device := store.Add(req.Name, req.MAC, req.IP)
@@ -175,7 +231,7 @@ func main() {
 			json.NewEncoder(w).Encode(device)
 			return
 		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 	})
 
 	// API: Get/Update/Delete a specific device
@@ -185,7 +241,7 @@ func main() {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/devices/"), "/")
 		id, err := strconv.Atoi(parts[0])
 		if err != nil {
-			http.Error(w, "invalid device ID", http.StatusBadRequest)
+			jsonError(w, "invalid device ID", http.StatusBadRequest)
 			return
 		}
 
@@ -193,7 +249,7 @@ func main() {
 		case http.MethodGet:
 			device, ok := store.Get(id)
 			if !ok {
-				http.Error(w, "device not found", http.StatusNotFound)
+				jsonError(w, "device not found", http.StatusNotFound)
 				return
 			}
 			json.NewEncoder(w).Encode(device)
@@ -205,25 +261,37 @@ func main() {
 				IP   string `json:"ip"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Name == "" || req.MAC == "" {
+				jsonError(w, "名称和MAC地址不能为空", http.StatusBadRequest)
+				return
+			}
+			if !validateMAC(req.MAC) {
+				jsonError(w, "MAC地址格式错误", http.StatusBadRequest)
+				return
+			}
+			if !validateIP(req.IP) {
+				jsonError(w, "IP地址格式错误", http.StatusBadRequest)
 				return
 			}
 			device, ok := store.Update(id, req.Name, req.MAC, req.IP)
 			if !ok {
-				http.Error(w, "device not found", http.StatusNotFound)
+				jsonError(w, "device not found", http.StatusNotFound)
 				return
 			}
 			json.NewEncoder(w).Encode(device)
 
 		case http.MethodDelete:
 			if ok := store.Delete(id); !ok {
-				http.Error(w, "device not found", http.StatusNotFound)
+				jsonError(w, "device not found", http.StatusNotFound)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
@@ -231,26 +299,50 @@ func main() {
 	mux.HandleFunc("/api/wake", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
 			ID int `json:"id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		device, ok := store.Get(req.ID)
 		if !ok {
-			http.Error(w, "device not found", http.StatusNotFound)
+			jsonError(w, "device not found", http.StatusNotFound)
 			return
 		}
 		if err := sendWOL(device.MAC, device.IP); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "WOL packet sent to " + device.Name})
+	})
+
+	// API: Check status of all devices
+	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		devices := store.List()
+		result := make([]map[string]string, len(devices))
+		var wg sync.WaitGroup
+		for i, d := range devices {
+			wg.Add(1)
+			go func(idx int, dev Device) {
+				defer wg.Done()
+				result[idx] = map[string]string{
+					"id":     strconv.Itoa(dev.ID),
+					"status": checkDeviceStatus(dev.IP),
+				}
+			}(i, d)
+		}
+		wg.Wait()
+		json.NewEncoder(w).Encode(result)
 	})
 
 	// Serve web UI

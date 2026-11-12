@@ -10,18 +10,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .container { max-width: 800px; margin: 0 auto; }
 h1 { text-align: center; margin-bottom: 20px; color: #333; }
 .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.card h2 { font-size: 16px; margin-bottom: 12px; color: #555; }
-.form-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-.form-row input { flex: 1; min-width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
-.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; }
-.btn-primary { background: #2ea44f; color: #fff; }
-.btn-primary:hover { background: #2c974b; }
-.btn-wake { background: #0366d6; color: #fff; }
-.btn-wake:hover { background: #0256b9; }
-.btn-edit { background: #6f42c1; color: #fff; }
-.btn-edit:hover { background: #5a32a3; }
-.btn-delete { background: #d73a49; color: #fff; }
-.btn-delete:hover { background: #cb2431; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.card h2 { font-size: 16px; color: #555; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; }
 th { background: #f8f9fa; font-weight: 600; color: #555; }
@@ -31,6 +21,34 @@ tr:hover { background: #f8f9fa; }
 .msg.show { display: block; }
 .msg-success { background: #e6ffed; color: #22863a; border: 1px solid #34d058; }
 .msg-error { background: #ffeef0; color: #d73a49; border: 1px solid #d73a49; }
+.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+.btn-primary { background: #2ea44f; color: #fff; }
+.btn-primary:hover { background: #2c974b; }
+.btn-wake { background: #0366d6; color: #fff; }
+.btn-wake:hover { background: #0256b9; }
+.btn-edit { background: #6f42c1; color: #fff; }
+.btn-edit:hover { background: #5a32a3; }
+.btn-delete { background: #d73a49; color: #fff; }
+.btn-delete:hover { background: #cb2431; }
+.btn-sm { padding: 4px 10px; font-size: 13px; }
+/* Modal */
+.overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: center; }
+.overlay.show { display: flex; }
+.modal { background: #fff; border-radius: 10px; padding: 24px; width: 400px; max-width: 90vw; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+.modal h3 { margin-bottom: 16px; font-size: 18px; color: #333; }
+.modal label { display: block; margin-bottom: 4px; font-size: 13px; color: #666; }
+.modal input { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; margin-bottom: 12px; }
+.modal input:focus { outline: none; border-color: #0366d6; box-shadow: 0 0 0 2px rgba(3,102,214,0.15); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.btn-cancel { background: #e1e4e8; color: #333; }
+.btn-cancel:hover { background: #d1d5da; }
+/* Status badges */
+.status { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 500; }
+.status-online { background: #e6ffed; color: #22863a; }
+.status-offline { background: #f0f0f0; color: #999; }
+.status-unknown { background: #fff8e1; color: #b08800; }
+.status-no_ip { background: #f0f0f0; color: #bbb; }
+.status-loading { color: #ccc; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -38,66 +56,153 @@ tr:hover { background: #f8f9fa; }
   <h1>WOL 网络唤醒</h1>
   <div id="msg" class="msg"></div>
   <div class="card">
-    <h2>添加设备</h2>
-    <div class="form-row">
-      <input id="addName" placeholder="设备名称">
-      <input id="addMAC" placeholder="MAC 地址 (AA:BB:CC:DD:EE:FF)">
-      <input id="addIP" placeholder="IP 地址 (192.168.1.100)">
-      <button class="btn btn-primary" onclick="addDevice()">添加</button>
+    <div class="card-header">
+      <h2>设备列表</h2>
+      <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ 添加设备</button>
     </div>
-  </div>
-  <div class="card">
-    <h2>设备列表</h2>
     <table>
-      <thead><tr><th>名称</th><th>MAC</th><th>IP</th><th>操作</th></tr></thead>
+      <thead><tr><th>名称</th><th>MAC</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
       <tbody id="deviceTable"></tbody>
     </table>
   </div>
 </div>
+
+<!-- Modal Dialog -->
+<div id="overlay" class="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <h3 id="modalTitle">添加设备</h3>
+    <label>设备名称 *</label>
+    <input id="modalName" placeholder="如：NAS、我的电脑">
+    <label>MAC 地址 *</label>
+    <input id="modalMAC" placeholder="AA:BB:CC:DD:EE:FF">
+    <label>IP 地址（可选）</label>
+    <input id="modalIP" placeholder="192.168.1.100">
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" id="modalSave" onclick="saveDevice()">保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = '/api';
+var editingId = null;
+
 function showMsg(text, isError) {
   const el = document.getElementById('msg');
   el.textContent = text;
   el.className = 'msg show ' + (isError ? 'msg-error' : 'msg-success');
   setTimeout(() => el.className = 'msg', 3000);
 }
+async function safeJSON(res) {
+  try { return await res.json(); } catch(e) { return { error: res.statusText || '请求失败' }; }
+}
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function validMAC(mac) { return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac); }
+function validIP(ip) { if (!ip) return true; return /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) && ip.split('.').every(function(n){return parseInt(n)<=255;}); }
+
 async function loadDevices() {
   const res = await fetch(API + '/devices');
-  const devices = await res.json();
+  const devices = await safeJSON(res);
   const tbody = document.getElementById('deviceTable');
-  tbody.innerHTML = devices.map(d => '<tr><td>' + d.name + '</td><td>' + d.mac + '</td><td>' + d.ip + '</td><td class="actions"><button class="btn btn-wake" onclick="wakeDevice(' + d.id + ')">唤醒</button><button class="btn btn-edit" onclick="editDevice(' + d.id + ',\'' + d.name + '\',\'' + d.mac + '\',\'' + d.ip + '\')">编辑</button><button class="btn btn-delete" onclick="deleteDevice(' + d.id + ')">删除</button></td></tr>').join('');
+  if (!Array.isArray(devices)) { tbody.innerHTML = '<tr><td colspan="5">加载失败</td></tr>'; return; }
+  if (devices.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999">暂无设备，点击右上角添加</td></tr>'; return; }
+  tbody.innerHTML = devices.map(d => '<tr><td>' + escHtml(d.name) + '</td><td>' + escHtml(d.mac) + '</td><td>' + escHtml(d.ip) + '</td><td id="status-' + d.id + '"><span class="status-loading">检测中...</span></td><td class="actions"><button class="btn btn-wake btn-sm" onclick="wakeDevice(' + d.id + ')">唤醒</button><button class="btn btn-edit btn-sm" onclick="openEditModal(' + d.id + ')">编辑</button><button class="btn btn-delete btn-sm" onclick="deleteDevice(' + d.id + ')">删除</button></td></tr>').join('');
+  loadStatus();
 }
-async function addDevice() {
-  const name = document.getElementById('addName').value.trim();
-  const mac = document.getElementById('addMAC').value.trim();
-  const ip = document.getElementById('addIP').value.trim();
+
+var statusLabels = { online: '已上线', offline: '已下线', unknown: '探测超时', no_ip: '未配置IP' };
+async function loadStatus() {
+  try {
+    const res = await fetch(API + '/status');
+    const statuses = await safeJSON(res);
+    if (!Array.isArray(statuses)) return;
+    statuses.forEach(function(s) {
+      var el = document.getElementById('status-' + s.id);
+      if (el) {
+        var label = statusLabels[s.status] || s.status;
+        el.innerHTML = '<span class="status status-' + s.status + '">' + label + '</span>';
+      }
+    });
+  } catch(e) {}
+}
+
+// Modal operations
+function openAddModal() {
+  editingId = null;
+  document.getElementById('modalTitle').textContent = '添加设备';
+  document.getElementById('modalName').value = '';
+  document.getElementById('modalMAC').value = '';
+  document.getElementById('modalIP').value = '';
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('modalName').focus();
+}
+async function openEditModal(id) {
+  editingId = id;
+  const res = await fetch(API + '/devices/' + id);
+  const d = await safeJSON(res);
+  if (!res.ok) { showMsg(d.error || '获取设备失败', true); return; }
+  document.getElementById('modalTitle').textContent = '编辑设备';
+  document.getElementById('modalName').value = d.name;
+  document.getElementById('modalMAC').value = d.mac;
+  document.getElementById('modalIP').value = d.ip;
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('modalName').focus();
+}
+function closeModal() {
+  document.getElementById('overlay').classList.remove('show');
+  editingId = null;
+}
+async function saveDevice() {
+  const name = document.getElementById('modalName').value.trim();
+  const mac = document.getElementById('modalMAC').value.trim();
+  const ip = document.getElementById('modalIP').value.trim();
   if (!name || !mac) { showMsg('请填写名称和MAC地址', true); return; }
-  const res = await fetch(API + '/devices', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, mac, ip}) });
-  if (res.ok) { showMsg('设备已添加'); document.getElementById('addName').value=''; document.getElementById('addMAC').value=''; document.getElementById('addIP').value=''; loadDevices(); }
-  else { showMsg('添加失败', true); }
+  if (!validMAC(mac)) { showMsg('MAC地址格式错误，应为 AA:BB:CC:DD:EE:FF', true); return; }
+  if (ip && !validIP(ip)) { showMsg('IP地址格式错误，应为 xxx.xxx.xxx.xxx', true); return; }
+
+  if (editingId === null) {
+    // Add new device
+    const res = await fetch(API + '/devices', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, mac, ip}) });
+    const data = await safeJSON(res);
+    if (res.ok) { showMsg('设备已添加'); closeModal(); loadDevices(); }
+    else { showMsg(data.error || '添加失败', true); }
+  } else {
+    // Update existing device
+    const res = await fetch(API + '/devices/' + editingId, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, mac, ip}) });
+    const data = await safeJSON(res);
+    if (res.ok) { showMsg('已更新'); closeModal(); loadDevices(); }
+    else { showMsg(data.error || '更新失败', true); }
+  }
 }
-function editDevice(id, name, mac, ip) {
-  const newName = prompt('设备名称', name);
-  if (newName === null) return;
-  const newMac = prompt('MAC 地址', mac);
-  if (newMac === null) return;
-  const newIp = prompt('IP 地址', ip);
-  if (newIp === null) return;
-  fetch(API + '/devices/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:newName, mac:newMac, ip:newIp}) }).then(r => { if(r.ok) { showMsg('已更新'); loadDevices(); } else showMsg('更新失败', true); });
-}
+
 async function deleteDevice(id) {
   if (!confirm('确定删除此设备？')) return;
   const res = await fetch(API + '/devices/' + id, { method: 'DELETE' });
-  if (res.ok) { showMsg('已删除'); loadDevices(); } else showMsg('删除失败', true);
+  if (res.ok) { showMsg('已删除'); loadDevices(); }
+  else { const data = await safeJSON(res); showMsg(data.error || '删除失败', true); }
 }
 async function wakeDevice(id) {
+  var row = document.querySelector('button[onclick="wakeDevice(' + id + ')"]');
+  var deviceName = row ? row.closest('tr').children[0].textContent : ('ID=' + id);
   const res = await fetch(API + '/wake', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) });
-  const data = await res.json();
-  if (res.ok) showMsg(data.message || '唤醒指令已发送');
-  else showMsg(data.message || '唤醒失败', true);
+  const data = await safeJSON(res);
+  if (res.ok) showMsg('【' + deviceName + '】' + (data.message || '唤醒指令已发送'), false);
+  else showMsg('【' + deviceName + '】唤醒失败：' + (data.error || '未知错误'), true);
 }
+
+// Enter key to save in modal
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && document.getElementById('overlay').classList.contains('show')) {
+    saveDevice();
+  }
+  if (e.key === 'Escape' && document.getElementById('overlay').classList.contains('show')) {
+    closeModal();
+  }
+});
+
 loadDevices();
+setInterval(loadStatus, 30000);
 </script>
 </body>
 </html>

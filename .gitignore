@@ -1,0 +1,5 @@
+# Compiled binary
+src/server
+
+# Runtime data
+src/devices.json
